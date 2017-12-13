@@ -8,10 +8,17 @@ class PaddedDataIterator():
     self.df_decoder = df2
     
     self.size = len(self.df_encoder)
+    self.sample_count = {}
     self.epochs = 0
 
   def next_batch(self, n):
     samples = random.sample(range(self.size), n)
+    for sample in samples:
+      if sample not in self.sample_count:
+        self.sample_count[sample] = 1
+      else:
+        self.sample_count[sample]+=1
+
     encoder_res = []
     decoder_res = []
     encoder_max_len = 0

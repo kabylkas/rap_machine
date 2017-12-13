@@ -16,7 +16,6 @@ __pycache__/
 *.gz
 # Distribution / packaging
 .Python
-model/
 env/
 build/
 develop-eggs/

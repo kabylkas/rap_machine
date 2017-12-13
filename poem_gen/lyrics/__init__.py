@@ -40,6 +40,7 @@ class lyrics:
     sen = sen.replace("]", " **sqbracketsclose** ")
     sen = sen.replace("{", " **curbracketsopen** ")
     sen = sen.replace("}", " **curbracketsclose** ")
+    sen = sen.replace("'", "")
     sen = sen.replace("\n", " **newline** ")
 
     sen_num = ""

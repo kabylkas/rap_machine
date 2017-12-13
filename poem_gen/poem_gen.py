@@ -1,8 +1,11 @@
 import pandas as pd, numpy as np, tensorflow as tf
+from tensorflow.contrib.seq2seq.python.ops import beam_search_ops
 from tensorflow.python.layers import core as layers_core
 import lyrics
 import dataIterator
 import sys
+import random
+from datetime import datetime
 
 def reset_graph():
   if 'sess' in globals() and sess:
@@ -54,15 +57,32 @@ def build_graph(vocab_size, state_size, batch_size):
   decoder_cell = tf.nn.rnn_cell.GRUCell(state_size)
   helper = tf.contrib.seq2seq.TrainingHelper(decoder_rnn_inputs, decoder_seqlen, time_major=True)
   decoder = tf.contrib.seq2seq.BasicDecoder(decoder_cell, helper, encoder_final_state, output_layer=projection_layer)
+  #beam search
+  beam_width=10
+  decoder_initial_state = tf.contrib.seq2seq.tile_batch(encoder_final_state, multiplier=beam_width)
+  decoder_beam = tf.contrib.seq2seq.BeamSearchDecoder(\
+        cell=decoder_cell,\
+        embedding=embedding_decoder,\
+        start_tokens=[0],\
+        end_token=1,\
+        initial_state=decoder_initial_state,\
+        beam_width=beam_width,\
+        output_layer=projection_layer,\
+        length_penalty_weight=0.0)
+
   outputs, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder, ...)
   logits = outputs.rnn_output  
+  
+  outputs_beam, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder_beam, ...)
+  next_lines = tf.identity(tf.transpose(outputs_beam.predicted_ids), name="next_lines")
+  
 
   #target_weights = tf.placeholder(tf.float32, [batch_size, None])
   
-  #max_time = tf.reduce_max(decoder_seqlen)
-  #target_weights = tf.sequence_mask(decoder_seqlen, max_time, dtype=logits.dtype)
+  max_time = tf.reduce_max(decoder_seqlen)
+  target_weights = tf.transpose(tf.sequence_mask(decoder_seqlen, max_time, dtype=logits.dtype))
   crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=decoder_outputs, logits=logits)
-  train_loss = (tf.reduce_sum(crossent)/batch_size)
+  train_loss = (tf.reduce_sum(crossent*target_weights)/batch_size)
 
   # Calculate and clip gradients
   max_gradient_norm = 5
@@ -97,7 +117,11 @@ def build_graph(vocab_size, state_size, batch_size):
           "e_len": encoder_seqlen,\
           "d_in": decoder_inputs,\
           "d_out": decoder_outputs,\
-          "d_len": decoder_seqlen}
+          "d_len": decoder_seqlen,\
+          "max_time": max_time,\
+          "crossent": crossent,\
+          "target_weights": target_weights,\
+          "next_lines": next_lines}
 
 def train_graph(graph, iterator, batch_size, num_epochs, model_path):
   print("Starting trainging")
@@ -143,20 +167,30 @@ def infer(data, seed, batch_size, num_lines, model_path):
     encoder_inputs = graph.get_tensor_by_name("encoder_inputs:0")
     encoder_seqlen = graph.get_tensor_by_name("encoder_seqlen:0")
     generate_lines = graph.get_tensor_by_name("generate_lines:0") 
+    nls = graph.get_tensor_by_name("next_lines:0") 
     
     all_lines = seed+"\n"
     line = data.tokenize(seed)
     for k in range(num_lines):
       e_in = np.zeros([batch_size, len(line)])
       for i in range(len(line)):
-        e_in[0][i] = line[i]
+        if line[i] == -1:
+          break
+        else:
+          e_in[0][i] = line[i]
       e_len = np.ones(batch_size)
       e_len[0] = len(line)
       feed = {encoder_inputs: e_in, encoder_seqlen: e_len} 
-      next_line = sess.run([generate_lines], feed_dict=feed)
+      next_lines = sess.run([nls], feed_dict=feed)
+      #next_lines = np.transpose(next_lines)
+      next_line = next_lines[0][random.randint(0, 3)][0]
+      line = next_line
+      all_lines+=data.tokens_to_sentence(next_line)+"\n"
+      """
       next_line = next_line[0][0]
       line = next_line
-      all_lines+=data.tokens_to_sentence(next_line)
+      all_lines+=data.tokens_to_sentence(next_line)+"\n"
+      """
 
     print(all_lines)
 
@@ -167,9 +201,11 @@ def process_args(args):
     print("  After training, for inference: poem_gen -i 'seed for the generator'")
     exit(0)
   elif args[1] == "-t":
-    return "t", "nothing"
+    return "t", args[2], 0
+  elif args[1] == "-d":
+    return "dump", args[2], 0
   elif args[1] == "-i":
-    return "i", args[2]
+    return "i", args[2], args[3]
   else:
     print("Usage:")
     print("  For training the model: poem_gen.py -t")
@@ -178,16 +214,19 @@ def process_args(args):
 #############
 #MAIN
 #############
-action, seed = process_args(sys.argv)
+random.seed(datetime.now())
 
-encoder_file_path = "./input/2pac.in.encoder"
-decoder_file_path = "./input/2pac.in.decoder"
+action, in_file, seed = process_args(sys.argv)
+
+encoder_file_path = "./input/{0}.encoder".format(in_file)
+decoder_file_path = "./input/{0}.decoder".format(in_file)
 model_path = "./model/"
 
-encoder = lyrics.lyrics(encoder_file_path)
-decoder = lyrics.lyrics(decoder_file_path)
+encoder = lyrics.lyrics(encoder_file_path, dict_size=15000)
+print(len(encoder.d))
+decoder = lyrics.lyrics(decoder_file_path, dict_size=3000)
 iterator = dataIterator.PaddedDataIterator(encoder.df, decoder.df)
-batch_size = 10
+batch_size = 1
 state_size = 64
 
 if action == "t":
@@ -198,12 +237,18 @@ if action == "t":
   train_graph(graph=tf_graph, \
               iterator=iterator, \
               batch_size=batch_size, \
-              num_epochs = 12000,\
+              num_epochs = 10000,\
               model_path = model_path)
+
 elif action == "i":
   print(seed)
   infer(data=decoder,\
         seed = seed,\
         batch_size = batch_size,\
-        num_lines = 4,\
+        num_lines = 10,\
         model_path=model_path)
+elif action == "dump":
+  with open("vocab.out", "w") as out_file:
+    for word in encoder.d:
+      out_file.write("{0}\n".format(word))
+  
