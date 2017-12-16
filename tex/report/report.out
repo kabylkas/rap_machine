@@ -1,0 +1,16 @@
+\BOOKMARK [1][-]{section.1}{Introduction}{}% 1
+\BOOKMARK [1][-]{section.2}{Image Captioning}{}% 2
+\BOOKMARK [2][-]{subsection.2.1}{Image Feature Extraction}{section.2}% 3
+\BOOKMARK [2][-]{subsection.2.2}{Textual Descriptions Generation}{section.2}% 4
+\BOOKMARK [3][-]{subsubsection.2.2.1}{Architecture}{subsection.2.2}% 5
+\BOOKMARK [3][-]{subsubsection.2.2.2}{Dataset}{subsection.2.2}% 6
+\BOOKMARK [3][-]{subsubsection.2.2.3}{Hyperparameters}{subsection.2.2}% 7
+\BOOKMARK [2][-]{subsection.2.3}{Image Captioning Results}{section.2}% 8
+\BOOKMARK [1][-]{section.3}{Lyrics Generation}{}% 9
+\BOOKMARK [2][-]{subsection.3.1}{Background}{section.3}% 10
+\BOOKMARK [2][-]{subsection.3.2}{Architecture}{section.3}% 11
+\BOOKMARK [2][-]{subsection.3.3}{Dataset}{section.3}% 12
+\BOOKMARK [2][-]{subsection.3.4}{Training}{section.3}% 13
+\BOOKMARK [2][-]{subsection.3.5}{Challenges and Results}{section.3}% 14
+\BOOKMARK [1][-]{section.4}{Evaluation}{}% 15
+\BOOKMARK [1][-]{section.5}{Conclusion}{}% 16
