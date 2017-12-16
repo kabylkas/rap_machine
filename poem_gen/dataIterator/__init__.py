@@ -6,13 +6,17 @@ class PaddedDataIterator():
   def __init__(self, df1, df2):
     self.df_encoder = df1
     self.df_decoder = df2
-    
+    self.begin_index = 0
+    for key, _ in df1["string"].items():
+      self.begin_index = key
+      break
     self.size = len(self.df_encoder)
     self.sample_count = {}
     self.epochs = 0
 
   def next_batch(self, n):
     samples = random.sample(range(self.size), n)
+    samples = [self.begin_index+sample for sample in samples]
     for sample in samples:
       if sample not in self.sample_count:
         self.sample_count[sample] = 1
@@ -23,6 +27,7 @@ class PaddedDataIterator():
     decoder_res = []
     encoder_max_len = 0
     decoder_max_len = 0
+
     for sample in samples:
       encoder_res.append((self.df_encoder["string"][sample], \
                          self.df_encoder["as_numbers"][sample], \
@@ -54,3 +59,10 @@ class PaddedDataIterator():
       decoder_len.append(decoder_res[i][2])
 
     return encoder_x, encoder_len, decoder_x, decoder_len
+
+  def get_bleu_references(self):
+    references = []
+    for line in self.df_decoder["as_numbers"]:
+      references.append(line)
+    return references
+

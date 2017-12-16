@@ -6,6 +6,10 @@ import dataIterator
 import sys
 import random
 from datetime import datetime
+from nltk.translate.bleu_score import sentence_bleu
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.feature_extraction.text import TfidfTransformer
+import math
 
 def reset_graph():
   if 'sess' in globals() and sess:
@@ -123,17 +127,21 @@ def build_graph(vocab_size, state_size, batch_size):
           "target_weights": target_weights,\
           "next_lines": next_lines}
 
-def train_graph(graph, iterator, batch_size, num_epochs, model_path):
+def train_graph(graph, data, train_iterator, test_iterator, batch_size, num_epochs, model_path):
   print("Starting trainging")
   with tf.Session() as sess:
     sess.run(tf.global_variables_initializer())
     current_epoch = 0
     saver = tf.train.Saver()
+    test_num=0
+    #build refence for the blue scoring
+    references_as_num = train_iterator.get_bleu_references()
+    references = []
+    for ref_as_num in references_as_num:
+      references.append(data.tokens_to_sentence(ref_as_num).split(" "))
     while current_epoch<num_epochs:
       current_epoch+=1
-      e_batch, e_len, d_batch, d_len = iterator.next_batch(batch_size)
-      #put <s> and </s> tokens
-      target_weights = np.zeros([batch_size, max(d_len)-1])
+      e_batch, e_len, d_batch, d_len = train_iterator.next_batch(batch_size)
       t_d_batch = np.transpose(d_batch)
       d_batch_in = np.transpose(np.delete(t_d_batch, d_batch.shape[1]-1, 0)) 
       d_batch_out = np.transpose(np.delete(t_d_batch, 0, 0)) 
@@ -142,8 +150,6 @@ def train_graph(graph, iterator, batch_size, num_epochs, model_path):
         d_len[i]-=1
         if len(d_batch_in[i])!=d_len[i]:
           d_batch_in[i][d_len[i]] = 0
-        for j in range(d_len[i]):
-          target_weights[i,j] = 1
       #feed to the graph
       feed = {graph["e_in"]:  e_batch,\
               graph["e_len"]: e_len,\
@@ -152,8 +158,28 @@ def train_graph(graph, iterator, batch_size, num_epochs, model_path):
               graph["d_len"]: d_len}
 
       loss, _ = sess.run([graph["train_loss"], graph["update_step"]], feed_dict = feed)
+      #test every 1000 iterations
       if current_epoch%1000 == 0:
-        print(loss)
+        print("Test #: {0}".format(test_num))
+        test_num+=1
+        print("Loss on the last batch: {0}".format(loss))
+        score = 0
+        for test in range(5):
+          e_batch, e_len, d_batch, _ = test_iterator.next_batch(1)
+          #feed to the graph
+          feed = {graph["e_in"]:  e_batch,\
+                  graph["e_len"]: e_len}
+          
+          next_lines = sess.run([graph["next_lines"]], feed_dict=feed)
+          next_line = next_lines[0][random.randint(3, 5)][0]
+          candidate = data.tokens_to_sentence(next_line).split(" ")
+          candidate_str = data.tokens_to_sentence(next_line)
+          score += sentence_bleu(references, candidate)
+        #print("Test input:   {0}".format(str.replace(data.tokens_to_sentence(e_batch[0]), "\n", "")))
+        #print("Test target:  {0}".format(str.replace(data.tokens_to_sentence(d_batch[0]), "\n", "")))
+        print("Model output: {0}".format(str.replace(candidate_str, "\n", "")))
+        print("Average BLEU score: {0}".format(score/5))
+        print("==============================")
 
     print("Saving model to {0}".format(model_path))
     saver.save(sess, "{0}poem_gen".format(model_path))
@@ -183,7 +209,7 @@ def infer(data, seed, batch_size, num_lines, model_path):
       feed = {encoder_inputs: e_in, encoder_seqlen: e_len} 
       next_lines = sess.run([nls], feed_dict=feed)
       #next_lines = np.transpose(next_lines)
-      next_line = next_lines[0][random.randint(0, 3)][0]
+      next_line = next_lines[0][random.randint(1, 6)][0]
       line = next_line
       all_lines+=data.tokens_to_sentence(next_line)+"\n"
       """
@@ -211,6 +237,41 @@ def process_args(args):
     print("  For training the model: poem_gen.py -t")
     print("  After training, for inference: poem_gen.py -i 'seed for the generator'")
     exit(0)
+
+def cosine_similarity(vector1, vector2):
+  dot_product = np.dot(vector1, vector2)
+  magnitude = math.sqrt(sum([val**2 for val in vector1])) * math.sqrt(sum([val**2 for val in vector2]))
+  if not magnitude:
+      return 0
+  return dot_product/magnitude
+
+def get_best_match(seed, data):
+  vectorizer = CountVectorizer()
+  transformer = TfidfTransformer(smooth_idf=False)
+
+  corpus = []
+  for key, line in data.df["string"].items():
+    corpus.append(line)
+
+  vectorizer.fit_transform(corpus)
+  seed_counts = vectorizer.transform([data.process(seed)]).toarray()
+  seed_counts = np.squeeze(np.asarray(seed_counts))
+  seed_tfidf = transformer.fit_transform(seed_counts)
+
+  max_sim = 0
+  save_line = ""
+  for key, line in data.df["string"].items():
+    if "**endsong**" in line:
+      continue
+    line_counts = vectorizer.transform([line]).toarray()
+    line_counts = np.squeeze(np.asarray(line_counts))
+    line_tfidf = transformer.fit_transform(line_counts)
+    sim = cosine_similarity(line_counts, seed_counts) 
+    if max_sim<sim:
+      max_sim = sim
+      save_line = line
+
+  return save_line
 #############
 #MAIN
 #############
@@ -220,14 +281,20 @@ action, in_file, seed = process_args(sys.argv)
 
 encoder_file_path = "./input/{0}.encoder".format(in_file)
 decoder_file_path = "./input/{0}.decoder".format(in_file)
-model_path = "./model/"
+model_path = "./model_eminem_256/"
 
-encoder = lyrics.lyrics(encoder_file_path, dict_size=15000)
-print(len(encoder.d))
+encoder = lyrics.lyrics(encoder_file_path, dict_size=3000)
 decoder = lyrics.lyrics(decoder_file_path, dict_size=3000)
-iterator = dataIterator.PaddedDataIterator(encoder.df, decoder.df)
+print(len(encoder.d))
+train_len, test_len = np.floor(len(encoder.df)*0.9), np.floor(len(encoder.df)*0.1)
+encoder_train_df, encoder_test_df = encoder.df.ix[:train_len-1], encoder.df.ix[train_len:train_len+test_len]
+decoder_train_df, decoder_test_df = decoder.df.ix[:train_len-1], decoder.df.ix[train_len:train_len+test_len]
+
+train_iterator = dataIterator.PaddedDataIterator(encoder_train_df, decoder_train_df)
+test_iterator = dataIterator.PaddedDataIterator(encoder_test_df, decoder_test_df)
+
 batch_size = 1
-state_size = 64
+state_size = 256
 
 if action == "t":
   tf_graph = build_graph(vocab_size=len(encoder.d), \
@@ -235,15 +302,18 @@ if action == "t":
                          batch_size=batch_size)
 
   train_graph(graph=tf_graph, \
-              iterator=iterator, \
+              data = decoder, \
+              train_iterator=train_iterator, \
+              test_iterator=test_iterator, \
               batch_size=batch_size, \
-              num_epochs = 10000,\
+              num_epochs = 5000,\
               model_path = model_path)
 
 elif action == "i":
   print(seed)
+  new_seed = get_best_match(seed, encoder)
   infer(data=decoder,\
-        seed = seed,\
+        seed = new_seed,\
         batch_size = batch_size,\
         num_lines = 10,\
         model_path=model_path)
